@@ -1,0 +1,346 @@
+<!--
+Steam Gift Cards Shop (Single-file demo)
+Filename: steam-shop-with-admin.html
+Description: Static HTML/CSS/JS single-file demo that implements:
+ - Product listing (Steam $10, $20, $50) with images and prices (10$ = 37 TND ratio)
+ - Shopping cart and checkout form (collects name, phone, email, chosen product, optional Tx ID)
+ - Orders stored in localStorage (acts as a simple backend for demo)
+ - Admin dashboard (protected by a simple password) to view orders, mark as paid, add/send Steam code, export CSV
+
+How to use:
+ 1. Save this file as `index.html` (or the name above) on your computer or hosting.
+ 2. Open it in your browser. Click "Shop" to buy or "Admin" to manage orders.
+ 3. Default admin password: admin123 (change in the code before production).
+
+Notes & Next steps for production:
+ - This demo uses localStorage only. For a real store you must implement a server (Node/Express, PHP, Python, etc.)
+ - For automated payment tracking, you'll need Poste Tunisienne merchant API (if available) or an email parser/webhook.
+ - Never store sensitive payment credentials in localStorage.
+ - Replace placeholder Postpay account number and contact info with your real info.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Steam Gift Cards - Shop (Demo)</title>
+  <style>
+    :root{--accent:#66c0f4;--dark:#1b2838;--card:#fff}
+    body{font-family:Inter, system-ui, Arial; margin:0; background:#f4f6f8; color:#111}
+    header{background:var(--dark); color:#fff; padding:18px 16px; display:flex; align-items:center; justify-content:space-between}
+    header h1{margin:0;font-size:1.1rem}
+    header nav a{color:#fff; text-decoration:none; margin-left:12px; font-weight:600}
+    .wrap{max-width:1000px; margin:24px auto; padding:0 16px}
+
+    .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px}
+    .card{background:var(--card); border-radius:10px; padding:12px; box-shadow:0 6px 18px rgba(8,15,25,0.06);}
+    .product-img{width:100%; height:150px; object-fit:contain; background:#fff; border-radius:6px}
+    .product-row{display:flex; gap:12px; align-items:center}
+
+    .btn{display:inline-block; padding:8px 12px; border-radius:8px; background:var(--accent); color:#fff; text-decoration:none; cursor:pointer; border:none}
+    .btn.secondary{background:#2f3640}
+    .muted{color:#555}
+
+    .cart{position:fixed; right:18px; bottom:18px; width:320px; max-width:90%;}
+    .cart .card{padding:12px}
+    .cart-items{max-height:260px; overflow:auto}
+
+    form.row{display:flex; gap:8px; flex-wrap:wrap}
+    label{display:block;font-size:0.9rem;margin-top:8px}
+    input[type=text], input[type=email], textarea, select{width:100%; padding:8px; border-radius:6px; border:1px solid #ddd}
+
+    /* Admin styles */
+    .admin-controls{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+    table{width:100%; border-collapse:collapse}
+    th,td{padding:8px; border-bottom:1px solid #eee; font-size:0.9rem}
+    .status-pill{display:inline-block; padding:4px 8px; border-radius:999px; font-weight:600}
+    .status-pending{background:#fff3cd;color:#856404}
+    .status-paid{background:#d4edda;color:#155724}
+    .status-completed{background:#cfe2ff;color:#084298}
+
+    footer{margin:40px 0 80px; color:#777; text-align:center}
+    @media (max-width:560px){header{flex-direction:column; gap:8px} .cart{width:95%; left:50%; transform:translateX(-50%); right:auto}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Steam Gift Cards - Tunisia</h1>
+    <nav>
+      <a href="#shop" id="link-shop">Shop</a>
+      <a href="#orders" id="link-orders">My Orders</a>
+      <a href="#admin" id="link-admin">Admin</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <!-- SHOP -->
+    <section id="shop-view">
+      <h2>Available Steam Gift Cards</h2>
+      <p class="muted">Rates: <strong>1 x $10 = 37 TND</strong>. Prices shown in TND (all taxes and fees included by seller).</p>
+
+      <div class="grid" id="products-grid"></div>
+    </section>
+
+    <!-- CART & CHECKOUT -->
+    <div class="cart" id="cart-panel">
+      <div class="card">
+        <h3>Your Cart</h3>
+        <div class="cart-items" id="cart-items"></div>
+        <p id="cart-total" style="font-weight:700;margin-top:8px">Total: 0 TND</p>
+        <button class="btn" id="checkout-btn">Checkout</button>
+      </div>
+    </div>
+
+    <!-- CHECKOUT FORM (modal-like) -->
+    <div id="checkout-form" style="display:none;margin-top:18px">
+      <div class="card">
+        <h3>Checkout</h3>
+        <form id="order-form">
+          <div class="row">
+            <div style="flex:1">
+              <label for="buyer-name">Full name</label>
+              <input id="buyer-name" required />
+            </div>
+            <div style="width:180px">
+              <label for="buyer-phone">Phone (Postpay phone)</label>
+              <input id="buyer-phone" required />
+            </div>
+          </div>
+          <label for="buyer-email">Email (optional for code delivery)</label>
+          <input id="buyer-email" type="email" />
+
+          <label for="tx-id">Postpay Transaction ID (optional for faster processing)</label>
+          <input id="tx-id" placeholder="e.g. 2025-08-09-12345" />
+
+          <p class="muted">Payment method: Poste Tunisienne - Postpay / e-Dinar. After placing the order, pay to: <strong>1234 5678 9012</strong> (placeholder). Then notify admin or include Tx ID above.</p>
+
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <button class="btn" type="submit">Place order</button>
+            <button type="button" class="btn secondary" id="cancel-checkout">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ORDERS (customer view) -->
+    <section id="orders-view" style="display:none">
+      <h2>Your Orders</h2>
+      <p class="muted">Orders are stored locally in this demo. Admin must confirm payment for delivery.</p>
+      <div id="customer-orders"></div>
+    </section>
+
+    <!-- ADMIN DASHBOARD -->
+    <section id="admin-view" style="display:none">
+      <h2>Admin Dashboard</h2>
+      <div class="card">
+        <div class="admin-controls">
+          <label>Admin password: <input id="admin-pass" type="password" placeholder="enter password" /></label>
+          <button class="btn" id="admin-login">Login</button>
+          <button class="btn secondary" id="admin-logout" style="display:none">Logout</button>
+          <button class="btn" id="export-csv" style="margin-left:auto">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Orders</h3>
+        <div id="admin-orders"></div>
+      </div>
+    </section>
+
+    <footer>
+      <p>&copy; 2025 Steam Gift Cards Tunisia - Demo</p>
+    </footer>
+  </main>
+
+  <script>
+    /* ====== CONFIG ====== */
+    const ADMIN_PASSWORD = 'admin123'; // CHANGE THIS BEFORE PRODUCTION
+    const POSTPAY_ACCOUNT = '1234 5678 9012';
+
+    // Base conversion: $10 = 37 TND
+    const PRICE_RATIO = 37 / 10; // TND per 1 USD
+    const PRODUCTS = [
+      {id: 's10', title: 'Steam Gift Card - $10', usd: 10, img: 'https://m.media-amazon.com/images/I/71r3Fv6FZ2L._AC_SL1500_.jpg'},
+      {id: 's20', title: 'Steam Gift Card - $20', usd: 20, img: 'https://m.media-amazon.com/images/I/71tBf8hQhNL._AC_SL1500_.jpg'},
+      {id: 's50', title: 'Steam Gift Card - $50', usd: 50, img: 'https://m.media-amazon.com/images/I/71XjS6y6ZyL._AC_SL1500_.jpg'}
+    ];
+
+    /* ====== UTIL ====== */
+    function priceTND(usd){ return Math.round((usd * PRICE_RATIO) /* no decimals */); }
+    function uid(prefix='o'){return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2,6)}
+
+    /* ====== STORAGE (localStorage demo) ====== */
+    function getOrders(){ return JSON.parse(localStorage.getItem('shop_orders')||'[]'); }
+    function saveOrders(list){ localStorage.setItem('shop_orders', JSON.stringify(list)); }
+
+    /* ====== RENDER PRODUCTS ====== */
+    const productsGrid = document.getElementById('products-grid');
+    function renderProducts(){
+      productsGrid.innerHTML = '';
+      for(const p of PRODUCTS){
+        const card = document.createElement('div'); card.className='card';
+        card.innerHTML = `
+          <div style="display:flex;flex-direction:column;height:100%">
+            <img class="product-img" src="${p.img}" alt="${p.title}" />
+            <div style="padding-top:8px;flex:1;display:flex;flex-direction:column;justify-content:space-between">
+              <div>
+                <h3 style="margin:0;font-size:1rem">${p.title}</h3>
+                <p class="muted">Price: <strong>${priceTND(p.usd)} TND</strong></p>
+              </div>
+              <div style="margin-top:8px">
+                <button class="btn add-to-cart" data-id="${p.id}">Add to cart</button>
+              </div>
+            </div>
+          </div>`;
+        productsGrid.appendChild(card);
+      }
+    }
+
+    /* ====== CART ====== */
+    let CART = JSON.parse(localStorage.getItem('shop_cart')||'{}'); // key: product id -> qty
+    const cartItemsEl = document.getElementById('cart-items');
+    const cartTotalEl = document.getElementById('cart-total');
+
+    function saveCart(){ localStorage.setItem('shop_cart', JSON.stringify(CART)); renderCart(); }
+    function renderCart(){
+      cartItemsEl.innerHTML = '';
+      let total=0; for(const pid in CART){
+        const qty = CART[pid]; const prod = PRODUCTS.find(x=>x.id===pid);
+        if(!prod) continue; const lineTotal = priceTND(prod.usd)*qty; total+=lineTotal;
+        const div = document.createElement('div'); div.style.display='flex'; div.style.justifyContent='space-between'; div.style.alignItems='center'; div.style.marginBottom='8px';
+        div.innerHTML = `<div style="flex:1">${prod.title} <div class="muted" style="font-size:0.85rem">${qty} x ${priceTND(prod.usd)} TND</div></div>
+                         <div style="display:flex;gap:6px"><button class="btn" data-op="inc" data-id="${pid}">+</button>
+                         <button class="btn secondary" data-op="dec" data-id="${pid}">-</button></div>`;
+        cartItemsEl.appendChild(div);
+      }
+      cartTotalEl.textContent = `Total: ${total} TND`;
+    }
+
+    document.addEventListener('click', (e)=>{
+      if(e.target.matches('.add-to-cart')){
+        const id = e.target.dataset.id; CART[id]=(CART[id]||0)+1; saveCart();
+      }
+      if(e.target.matches('button[data-op]')){
+        const id=e.target.dataset.id, op=e.target.dataset.op; if(op==='inc'){CART[id]=(CART[id]||0)+1} else {CART[id]=Math.max(0,(CART[id]||0)-1); if(CART[id]===0) delete CART[id]} saveCart();
+      }
+    });
+
+    document.getElementById('checkout-btn').addEventListener('click', ()=>{
+      if(Object.keys(CART).length===0){alert('Cart is empty'); return}
+      document.getElementById('checkout-form').style.display='block'; window.location.hash='checkout';
+    });
+    document.getElementById('cancel-checkout').addEventListener('click', ()=>{document.getElementById('checkout-form').style.display='none'});
+
+    /* ====== ORDER SUBMIT ====== */
+    document.getElementById('order-form').addEventListener('submit', (ev)=>{
+      ev.preventDefault();
+      const name = document.getElementById('buyer-name').value.trim();
+      const phone = document.getElementById('buyer-phone').value.trim();
+      const email = document.getElementById('buyer-email').value.trim();
+      const tx = document.getElementById('tx-id').value.trim();
+      if(!name||!phone){ alert('Please enter name and phone'); return }
+
+      // build order items
+      const items = Object.entries(CART).map(([pid,qty])=>{ const p=PRODUCTS.find(x=>x.id===pid); return {id:pid,title:p.title,qty,unitTnd:priceTND(p.usd), subtotal:priceTND(p.usd)*qty}});
+      const total = items.reduce((s,it)=>s+it.subtotal,0);
+      const order = {id:uid('ord_'), name, phone, email, txId:tx, items, total, status:'pending', createdAt:new Date().toISOString(), code:null};
+      const orders = getOrders(); orders.unshift(order); saveOrders(orders);
+      // clear cart
+      CART={}; saveCart(); document.getElementById('checkout-form').style.display='none'; alert('Order placed! Your order id: ' + order.id + '\nAdmin will confirm payment.');
+      renderCustomerOrders(); renderAdminOrders();
+    });
+
+    /* ====== CUSTOMER ORDERS VIEW (local demo) ====== */
+    function renderCustomerOrders(){
+      const out = document.getElementById('customer-orders'); const orders = getOrders();
+      if(orders.length===0){ out.innerHTML = '<div class="card"><p>No orders yet.</p></div>'; return }
+      out.innerHTML = orders.map(o=>{
+        return `<div class="card" style="margin-bottom:8px"><strong>Order ${o.id}</strong>
+          <div class="muted">${new Date(o.createdAt).toLocaleString()}</div>
+          <div style="margin-top:8px">${o.items.map(it=>`<div>${it.qty} x ${it.title} — ${it.subtotal} TND</div>`).join('')}</div>
+          <p style="font-weight:700">Total: ${o.total} TND</p>
+          <div>Status: ${renderStatus(o.status)}</div>
+          <div${o.code?` style="margin-top:8px"` : ''}>${o.code?`Steam code: <strong>${o.code}</strong>` : ''}</div>
+        </div>`
+      }).join('');
+    }
+
+    function renderStatus(s){ if(s==='pending') return `<span class="status-pill status-pending">PENDING</span>`; if(s==='paid') return `<span class="status-pill status-paid">PAID</span>`; return `<span class="status-pill status-completed">COMPLETED</span>` }
+
+    /* ====== ADMIN ====== */
+    let adminLogged=false;
+    document.getElementById('admin-login').addEventListener('click', ()=>{
+      const pass = document.getElementById('admin-pass').value;
+      if(pass===ADMIN_PASSWORD){ adminLogged=true; document.getElementById('admin-logout').style.display='inline-block'; document.getElementById('admin-login').style.display='none'; document.getElementById('admin-pass').style.display='none'; alert('Admin: logged in'); renderAdminOrders(); }
+      else alert('Wrong password');
+    });
+    document.getElementById('admin-logout').addEventListener('click', ()=>{ adminLogged=false; document.getElementById('admin-logout').style.display='none'; document.getElementById('admin-login').style.display='inline-block'; document.getElementById('admin-pass').style.display='inline-block'; renderAdminOrders(); });
+
+    function renderAdminOrders(){
+      const el = document.getElementById('admin-orders'); const orders = getOrders();
+      if(!adminLogged){ el.innerHTML = '<div class="muted">Log in as admin to see orders.</div>'; return }
+      if(orders.length===0){ el.innerHTML = '<div class="muted">No orders</div>'; return }
+      const rows = orders.map(o=>{
+        const actions = [];
+        if(o.status==='pending') actions.push(`<button class="btn" data-action="mark-paid" data-id="${o.id}">Mark as Paid</button>`);
+        if(o.status==='paid') actions.push(`<button class="btn" data-action="send-code" data-id="${o.id}">Send Steam Code</button>`);
+        if(o.status!=='completed') actions.push(`<button class="btn secondary" data-action="cancel" data-id="${o.id}">Cancel</button>`);
+        return `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="flex:1">
+            <div><strong>${o.id}</strong> — <span class="muted">${new Date(o.createdAt).toLocaleString()}</span></div>
+            <div class="muted">${o.name} — ${o.phone} ${o.email?'/ '+o.email:''}</div>
+            <div style="margin-top:6px">${o.items.map(it=>`<div>${it.qty} x ${it.title} — ${it.subtotal} TND</div>`).join('')}</div>
+            <div style="font-weight:700;margin-top:6px">Total: ${o.total} TND</div>
+            <div style="margin-top:6px">Status: ${renderStatus(o.status)} ${o.txId?` — Tx: ${o.txId}`:''}</div>
+            ${o.code?`<div style="margin-top:6px">Code: <strong>${o.code}</strong></div>`:''}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">${actions.join('')}</div>
+        </div>`
+      }).join('');
+      el.innerHTML = rows;
+    }
+
+    // admin action handler
+    document.getElementById('admin-orders').addEventListener('click', (e)=>{
+      if(!adminLogged) return; const action = e.target.dataset.action; const id = e.target.dataset.id; if(!action||!id) return;
+      let orders = getOrders(); const idx = orders.findIndex(o=>o.id===id); if(idx<0) return; const order = orders[idx];
+      if(action==='mark-paid'){
+        order.status='paid'; orders[idx]=order; saveOrders(orders); renderAdminOrders(); alert('Marked as PAID. You can now send the Steam code.');
+      }
+      if(action==='send-code'){
+        const code = prompt('Enter Steam code to send to customer (visible in record):');
+        if(code){ order.code = code.trim(); order.status='completed'; orders[idx]=order; saveOrders(orders); renderAdminOrders(); alert('Code saved and order completed.'); }
+      }
+      if(action==='cancel'){
+        if(confirm('Cancel this order?')){ orders.splice(idx,1); saveOrders(orders); renderAdminOrders(); alert('Order canceled.'); }
+      }
+    });
+
+    /* ====== CSV EXPORT ====== */
+    document.getElementById('export-csv').addEventListener('click', ()=>{
+      if(!adminLogged){ alert('Admin login required'); return }
+      const orders = getOrders(); if(orders.length===0){ alert('No orders'); return }
+      const rows = [ ['id','createdAt','name','phone','email','txId','items','total','status','code'] ];
+      for(const o of orders){ rows.push([o.id,o.createdAt,o.name,o.phone,o.email||'',o.txId||'', o.items.map(i=>`${i.qty}x${i.title}`).join('|'), o.total, o.status, o.code||'']); }
+      const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download='orders.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+
+    /* ====== NAVIGATION ====== */
+    document.getElementById('link-shop').addEventListener('click', (e)=>{ e.preventDefault(); showView('shop') });
+    document.getElementById('link-orders').addEventListener('click', (e)=>{ e.preventDefault(); showView('orders') });
+    document.getElementById('link-admin').addEventListener('click', (e)=>{ e.preventDefault(); showView('admin') });
+
+    function showView(name){ document.getElementById('shop-view').style.display = (name==='shop'||name==='')? 'block':'none';
+      document.getElementById('orders-view').style.display = (name==='orders')? 'block':'none';
+      document.getElementById('admin-view').style.display = (name==='admin')? 'block':'none';
+      window.scrollTo(0,0);
+    }
+
+    // initial render
+    renderProducts(); renderCart(); renderCustomerOrders(); renderAdminOrders();
+  </script>
+</body>
+</html>
